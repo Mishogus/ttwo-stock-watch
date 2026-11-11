@@ -195,8 +195,10 @@ def notify(cfg, title, message, priority="default", tags="", click=None):
     # RFC 2047 encoding so "€" survives in the HTTP header; ntfy decodes it.
     headers = {"Title": "=?UTF-8?B?" + base64.b64encode(title.encode("utf-8")).decode() + "?=",
                "Priority": priority, "Tags": tags}
+    # Tapping the notification opens this link: the article for news, otherwise the TTWO app with the chart.
+    click = click or cfg.get("app_url")
     if click and click.isascii():
-        headers["Click"] = click  # tapping the notification opens this link
+        headers["Click"] = click
     req = urllib.request.Request(url, data=message.encode("utf-8"), headers=headers, method="POST")
     urllib.request.urlopen(req, timeout=20).close()
     print(f"  -> sent: {title} | {message}")
