@@ -34,6 +34,8 @@ APP_DATA_PATH = HERE / "site" / "data.json"
 
 DEFAULT_CONFIG = {
     "symbol": "TTWO",
+    # Euro listing used for European mornings, before US pre-market (Frankfurt).
+    "eu_symbol": "TKE.F",
     "currency": "EUR",
     "ntfy_server": "https://ntfy.sh",
     "check_every_minutes": 5,
@@ -98,9 +100,11 @@ def require_topic(cfg):
     print(f"Created your private topic: {cfg['ntfy_topic']} (saved in ntfy_topic.txt)")
 
 
-def chart(symbol, range_="1d", interval="1d"):
+def chart(symbol, range_="1d", interval="1d", prepost=False):
     """Yahoo Finance's public chart endpoint (unofficial, delayed, may change)."""
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval={interval}&range={range_}"
+    if prepost:
+        url += "&includePrePost=true"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.load(resp)["chart"]["result"][0]
@@ -118,15 +122,57 @@ def fx_pair(src, dst):
 
 
 def get_quote(cfg):
-    meta = chart(cfg["symbol"])["meta"]
+    """The freshest price you could trade at with an EU broker (about 7:30-23:00 CET):
+    the US price incl. pre-market and after-hours, or the Frankfurt euro price in the
+    morning before US pre-market starts."""
+    us = chart(cfg["symbol"], "1d", "5m", prepost=True)
+    meta = us["meta"]
     src = meta.get("currency", "USD")
     dst = cfg.get("currency") or src
     pair = fx_pair(src, dst)
     rate = chart(pair)["meta"]["regularMarketPrice"] if pair else 1.0
+    now = time.time()
 
-    price_src = meta["regularMarketPrice"]
-    prev_src = meta.get("chartPreviousClose") or meta.get("previousClose") or price_src
-    regular = meta["currentTradingPeriod"]["regular"]
+    us_pts = series(us)
+    last_t, last_src = us_pts[-1] if us_pts else (0, None)
+    if meta.get("regularMarketTime", 0) >= last_t or last_src is None:
+        last_t, last_src = meta.get("regularMarketTime", 0), meta["regularMarketPrice"]
+    price, price_time, source = last_src * rate, last_t, "Nasdaq"
+    intraday = [[t, round(c * rate, 2)] for t, c in us_pts]
+
+    # Frankfurt (euro) fills the European morning, before US pre-market data starts.
+    eu_meta = None
+    eu_sym = cfg.get("eu_symbol") if dst == "EUR" else None
+    if eu_sym:
+        try:
+            eu = chart(eu_sym, "1d", "5m")
+            eu_meta, eu_pts = eu["meta"], series(eu)
+            if eu_pts and eu_pts[-1][0] > price_time + 30 * 60:
+                price_time, price = eu_pts[-1]
+                source = "Frankfurt"
+            first_us = intraday[0][0] if intraday else float("inf")
+            morning = [[t, round(c, 2)] for t, c in eu_pts if t < first_us and t > now - 20 * 3600]
+            intraday = morning + intraday
+        except Exception as e:
+            print(f"  Frankfurt price unavailable: {e}")
+
+    periods = meta["currentTradingPeriod"]
+    inside = lambda p: p["start"] <= now < p["end"]
+    if inside(periods["regular"]):
+        session = "open"
+    elif inside(periods["pre"]):
+        session = "pre"
+    elif inside(periods["post"]):
+        session = "post"
+    elif eu_meta and inside(eu_meta["currentTradingPeriod"]["regular"]):
+        session = "eu"
+    else:
+        session = "closed"
+    if session in ("pre", "post"):
+        source = "Nasdaq " + ("pre-market" if session == "pre" else "after hours")
+
+    prev = (meta.get("chartPreviousClose") or meta.get("previousClose") or last_src) * rate
+    vals = [v for _, v in intraday] + [price]
     conv = lambda v: None if v is None else round(v * rate, 2)
     return {
         "symbol": meta["symbol"],
@@ -135,18 +181,20 @@ def get_quote(cfg):
         "source_currency": src,
         "fx_rate": rate,
         "fx_pair": pair,
-        "price": conv(price_src),
-        "price_source": price_src,
-        "prev_close": conv(prev_src),
-        # % change in the stock's own currency, so currency moves don't fake a stock move.
-        "change_pct": (price_src - prev_src) / prev_src * 100 if prev_src else 0.0,
-        "day_high": conv(meta.get("regularMarketDayHigh")),
-        "day_low": conv(meta.get("regularMarketDayLow")),
+        "price": round(price, 2),
+        "prev_close": round(prev, 2),
+        # Change since the last official New York close, like your broker shows it.
+        "change_pct": (price - prev) / prev * 100 if prev else 0.0,
+        "day_high": round(max(vals), 2),
+        "day_low": round(min(vals), 2),
         "week52_high": conv(meta.get("fiftyTwoWeekHigh")),
         "week52_low": conv(meta.get("fiftyTwoWeekLow")),
-        "market_time": meta.get("regularMarketTime", 0),
-        "session_start": regular["start"],
-        "session_end": regular["end"],
+        "market_time": int(price_time),
+        "price_source": source,
+        "session": session,
+        "intraday": intraday,
+        "session_start": periods["regular"]["start"],
+        "session_end": periods["regular"]["end"],
     }
 
 
@@ -365,15 +413,16 @@ def write_app_data(cfg, q=None):
     else:
         history = [[t, round(c, 2)] for t, c in hist]
 
-    intraday = [[t, round(c * rate, 2)] for t, c in series(chart(cfg["symbol"], "1d", "5m"))]
+    intraday = q["intraday"]
 
     now = time.time()
     data = {
         **{k: q[k] for k in ("symbol", "name", "currency", "price", "prev_close", "change_pct",
-                             "day_high", "day_low", "week52_high", "week52_low", "market_time")},
+                             "day_high", "day_low", "week52_high", "week52_low", "market_time",
+                             "price_source", "session")},
         "change": round(q["price"] - q["prev_close"], 2),
         "fx": {"pair": q["fx_pair"], "rate": rate, "source_currency": q["source_currency"]},
-        "market_open": q["session_start"] <= now <= q["session_end"],
+        "market_open": q["session"] != "closed",
         "updated": int(now),
         "alerts": {
             "above": cfg.get("alert_above"),

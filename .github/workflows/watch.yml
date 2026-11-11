@@ -2,12 +2,12 @@ name: Stock watch
 
 on:
   schedule:
-    # Every 5 minutes, Mon-Fri, 13:00-21:55 UTC: US market hours in summer and winter,
-    # plus time after the close for the daily summary.
-    - cron: "*/5 13-21 * * 1-5"
+    # Every 5 minutes, Mon-Fri, 05:00-22:55 UTC: covers EU broker hours (7:30-23:00 Central
+    # European time, summer and winter), US pre-market, regular hours and after hours.
+    - cron: "*/5 5-22 * * 1-5"
     # Once an hour the rest of the time, so news alerts also arrive at night and on weekends.
-    - cron: "0 0-12,22-23 * * *"
-    - cron: "0 13-21 * * 0,6"
+    - cron: "0 0-4,23 * * *"
+    - cron: "0 5-22 * * 0,6"
     # GitHub may start scheduled runs a few minutes late.
   # Redeploy the app when you change it or the settings.
   push:

@@ -1,5 +1,6 @@
 {
   "symbol": "TTWO",
+  "eu_symbol": "TKE.F",
   "currency": "EUR",
   "ntfy_server": "https://ntfy.sh",
   "app_url": "https://mishogus.github.io/ttwo-stock-watch/",

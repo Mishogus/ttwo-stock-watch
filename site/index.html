@@ -40,6 +40,7 @@
   }
   .badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
   .badge.open i { background: var(--up); box-shadow: 0 0 8px var(--up); }
+  .badge.ext i { background: #f5b942; box-shadow: 0 0 8px #f5b942; }
 
   .price { font-size: 46px; font-weight: 700; letter-spacing: -.02em; margin: 18px 0 2px; font-variant-numeric: tabular-nums; }
   .change { font-size: 16px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
@@ -329,8 +330,16 @@ function render() {
   $("price").textContent = fmtMoney(d.price, cur);
   $("change").innerHTML = `${up ? "▲" : "▼"} ${fmtMoney(Math.abs(d.change), cur)} (${fmtPct(d.change_pct)}) <span>today</span>`;
 
-  $("badge").className = "badge" + (d.market_open ? " open" : "");
-  $("badge").querySelector("span").textContent = d.market_open ? "Market open" : "Market closed";
+  const sessions = {
+    open: ["open", "New York open"],
+    pre: ["ext", "Pre-market"],
+    post: ["ext", "After hours"],
+    eu: ["ext", "EU trading"],
+    closed: ["", "Closed"],
+  };
+  const [cls, text] = sessions[d.session] || (d.market_open ? sessions.open : sessions.closed);
+  $("badge").className = "badge " + cls;
+  $("badge").querySelector("span").textContent = text;
 
   $("dayRange").textContent = `${fmtMoney(d.day_low, cur)} – ${fmtMoney(d.day_high, cur)}`;
   $("yearRange").textContent = `${fmtMoney(d.week52_low, cur)} – ${fmtMoney(d.week52_high, cur)}`;
@@ -362,7 +371,8 @@ function render() {
         <div class="m">${esc(n.source)}${n.time ? " · " + ago(n.time) : ""}</div></a>`).join("")
     : `<div class="dist">No recent news</div>`;
 
-  $("footer").innerHTML = `Price from ${ago(d.market_time)} · updated ${ago(d.updated)}<br>Delayed data from Yahoo Finance · not financial advice`;
+  $("footer").innerHTML = `${esc(d.price_source || "Nasdaq")} price from ${ago(d.market_time)} · updated ${ago(d.updated)}<br>` +
+    `Your broker's price may differ slightly · delayed data from Yahoo Finance · not financial advice`;
   drawChart();
 }
 
