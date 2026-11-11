@@ -1,4 +1,5 @@
 ntfy_topic.txt
 __pycache__/
 site/data.json
+state.json
 .claude/

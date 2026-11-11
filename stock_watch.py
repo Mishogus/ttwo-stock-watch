@@ -12,13 +12,18 @@ Settings live in config.json next to this file. Only uses the Python standard li
 """
 
 import base64
+import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 import time
+import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -39,6 +44,19 @@ DEFAULT_CONFIG = {
     "alert_daily_move_percent": 4.0,
     # Send one summary after the market closes each trading day.
     "daily_summary": True,
+    # Alerts based on YOUR profit/loss in % (needs the BUY_PRICE secret).
+    # Going up past a positive level: "You're up +20%". Falling to 0 or below a negative level: warning.
+    "profit_alert_levels": [-20, -10, 0, 10, 20, 30, 50, 75, 100],
+    # News: headlines from Google News matching this search.
+    "news_query": '"GTA 6" OR "GTA VI" OR "Rockstar Games" OR "Take-Two Interactive"',
+    # Only headlines containing one of these words send a notification (all show in the app).
+    "news_alert_keywords": [
+        "release date", "delay", "delayed", "postpone", "trailer", "launch", "earnings", "results",
+        "guidance", "layoff", "acquisition", "acquire", "pre-order", "preorder", "price", "leak",
+        "lawsuit", "sales", "record", "downgrade", "upgrade", "gameplay", "announce",
+    ],
+    "news_max_alerts_per_run": 3,
+    "news_max_alerts_per_day": 6,
 }
 
 USER_AGENT = "Mozilla/5.0 (personal stock watcher)"
@@ -171,17 +189,15 @@ def fmt(q):
     return f"{money(q, q['price'])} {arrow} {q['change_pct']:+.2f}% today{position_line(q)}"
 
 
-def notify(cfg, title, message, priority="default", tags=""):
+def notify(cfg, title, message, priority="default", tags="", click=None):
     require_topic(cfg)
     url = f"{cfg['ntfy_server'].rstrip('/')}/{cfg['ntfy_topic']}"
-    req = urllib.request.Request(
-        url,
-        data=message.encode("utf-8"),
-        # RFC 2047 encoding so "€" survives in the HTTP header; ntfy decodes it.
-        headers={"Title": "=?UTF-8?B?" + base64.b64encode(title.encode("utf-8")).decode() + "?=",
-                 "Priority": priority, "Tags": tags},
-        method="POST",
-    )
+    # RFC 2047 encoding so "€" survives in the HTTP header; ntfy decodes it.
+    headers = {"Title": "=?UTF-8?B?" + base64.b64encode(title.encode("utf-8")).decode() + "?=",
+               "Priority": priority, "Tags": tags}
+    if click and click.isascii():
+        headers["Click"] = click  # tapping the notification opens this link
+    req = urllib.request.Request(url, data=message.encode("utf-8"), headers=headers, method="POST")
     urllib.request.urlopen(req, timeout=20).close()
     print(f"  -> sent: {title} | {message}")
 
@@ -225,8 +241,108 @@ def check(cfg):
         notify(cfg, f"{sym} daily summary", msg, "low", "bell")
         state["summary_sent"] = True
 
+    check_profit(cfg, q, state)
+    try:
+        check_news(cfg, state)
+    except Exception as e:  # a news hiccup must never block price alerts
+        print(f"  news error: {e}")
+
     save_json(STATE_PATH, state)
     return q
+
+
+def check_profit(cfg, q, state):
+    """Alerts on YOUR profit in %: milestones going up, break-even and losses going down."""
+    buy = env_num("BUY_PRICE")
+    levels = sorted(cfg.get("profit_alert_levels") or [])
+    if not buy or not levels:
+        return
+    pct = (q["price"] - buy) / buy * 100
+    zone = lambda p: sum(1 for lvl in levels if p >= lvl)  # how many levels we're at or above
+    old = state.get("profit_zone")
+    now_zone = zone(pct)
+    if old is None:  # first run: just remember where we are
+        state["profit_zone"] = now_zone
+        return
+
+    if now_zone > old:
+        top = levels[now_zone - 1]
+        if top > 0:
+            notify(cfg, f"You're up {top:+g}% on {q['symbol']}! 🎉", fmt(q), "high", "tada")
+        elif top == 0:
+            notify(cfg, f"{q['symbol']}: you're back in profit", fmt(q), "default", "arrow_up")
+        else:
+            notify(cfg, f"{q['symbol']}: your loss is back under {abs(top):g}%", fmt(q), "default", "arrow_up")
+        state["profit_zone"] = now_zone
+    else:
+        # Going down: wait until it's 0.5% past the line, so tiny wiggles don't spam you.
+        down_zone = zone(pct + 0.5)
+        if down_zone < old:
+            crossed = levels[down_zone]  # lowest level we fell below
+            if crossed == 0:
+                notify(cfg, f"{q['symbol']}: you're back to break-even", fmt(q), "high", "warning")
+            elif crossed < 0:
+                notify(cfg, f"{q['symbol']}: you're down {crossed:g}%", fmt(q), "high", "warning")
+            state["profit_zone"] = down_zone
+
+
+def get_news(cfg, limit=15):
+    """Latest headlines from Google News RSS (free, no key)."""
+    q = urllib.parse.quote(f"{cfg['news_query']} when:3d")
+    url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        root = ET.fromstring(resp.read())
+    items = []
+    for it in root.iter("item"):
+        title = (it.findtext("title") or "").strip()
+        source = (it.findtext("source") or "").strip()
+        if source and title.endswith(" - " + source):
+            title = title[: -len(source) - 3].strip()
+        try:
+            ts = int(parsedate_to_datetime(it.findtext("pubDate")).timestamp())
+        except Exception:
+            ts = 0
+        items.append({"title": title, "source": source, "link": (it.findtext("link") or "").strip(), "time": ts})
+    items.sort(key=lambda n: n["time"], reverse=True)
+    # Drop near-duplicates (same story from many sites).
+    seen, out = set(), []
+    for n in items:
+        key = news_id(n["title"])
+        if key not in seen:
+            seen.add(key)
+            out.append(n)
+    return out[:limit]
+
+
+def news_id(title):
+    norm = re.sub(r"[^a-z0-9 ]", "", title.lower())
+    return hashlib.sha1(" ".join(norm.split()[:10]).encode()).hexdigest()[:12]
+
+
+def check_news(cfg, state):
+    news = get_news(cfg)
+    seen = state.get("news_seen")
+    if seen is None:  # first run: remember what's out there, don't flood you with old news
+        state["news_seen"] = [news_id(n["title"]) for n in news]
+        return
+    keywords = [k.lower() for k in cfg.get("news_alert_keywords") or []]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if state.get("news_day") != today:
+        state["news_day"], state["news_sent_today"] = today, 0
+    sent = 0
+    for n in reversed(news):  # oldest first
+        nid = news_id(n["title"])
+        if nid in seen:
+            continue
+        seen.append(nid)
+        important = not keywords or any(k in n["title"].lower() for k in keywords)
+        if (important and sent < cfg.get("news_max_alerts_per_run", 3)
+                and state["news_sent_today"] < cfg.get("news_max_alerts_per_day", 6)):
+            notify(cfg, "GTA 6 / Rockstar news", f"{n['title']}\n— {n['source']}", "default", "video_game", n["link"])
+            sent += 1
+            state["news_sent_today"] += 1
+    state["news_seen"] = seen[-300:]
 
 
 def write_app_data(cfg, q=None):
@@ -264,7 +380,12 @@ def write_app_data(cfg, q=None):
         },
         "intraday": intraday,
         "history": history,
+        "news": [],
     }
+    try:
+        data["news"] = get_news(cfg, 10)
+    except Exception as e:
+        print(f"  news error: {e}")
     APP_DATA_PATH.parent.mkdir(exist_ok=True)
     APP_DATA_PATH.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     print(f"  -> wrote {APP_DATA_PATH.relative_to(HERE)} ({len(history)} days, {len(intraday)} intraday points)")

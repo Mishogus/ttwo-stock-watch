@@ -62,6 +62,20 @@
   }
   .ranges button.on { background: var(--card); color: var(--text); }
 
+  .views { display: inline-flex; gap: 2px; margin-top: 16px; padding: 3px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
+  .views[hidden] { display: none; }
+  .views button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+  .views button.on { background: var(--line); color: var(--text); }
+
+  .news a { display: block; color: var(--text); text-decoration: none; padding: 10px 0; }
+  .news a + a { border-top: 1px solid var(--line); }
+  .news a:first-child { padding-top: 2px; }
+  .news a:last-child { padding-bottom: 2px; }
+  .news .t { font-weight: 600; line-height: 1.35; }
+  .news .m { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .news a:active .t { color: var(--up); }
+  .dist { color: var(--muted); font-size: 13px; }
+
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
   .card small { display: block; color: var(--muted); font-size: 12px; margin-bottom: 2px; }
@@ -109,6 +123,11 @@
   <div class="change" id="change">&nbsp;</div>
   <div class="yourline" id="yourLine"></div>
 
+  <div class="views" id="views" hidden>
+    <button data-v="price" class="on">Price</button>
+    <button data-v="profit">My profit</button>
+  </div>
+
   <div class="chart-wrap" id="chartWrap">
     <svg id="chart" preserveAspectRatio="none"></svg>
     <div class="tip" id="tip"></div>
@@ -134,11 +153,15 @@
   <h2>Your alerts</h2>
   <div class="card alerts" id="alerts"></div>
 
+  <h2>GTA 6 &amp; Rockstar news</h2>
+  <div class="card news" id="news"><div class="dist">No news loaded yet</div></div>
+
   <footer id="footer">Loading…</footer>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let data = null, range = "1D";
+let data = null, range = "1D", view = "price";
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const fmtMoney = (v, cur) => v == null ? "–" :
   new Intl.NumberFormat("de-DE", { style: "currency", currency: cur || "EUR" }).format(v);
@@ -166,17 +189,31 @@ function drawChart() {
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   if (pts.length < 2) { svg.innerHTML = ""; return; }
 
-  const vals = pts.map((p) => p[1]);
-  // For 1D, compare against yesterday's close; otherwise against the first point in range.
-  const base = range === "1D" ? data.prev_close : vals[0];
+  const pos = getPos();
+  const profit = view === "profit" && pos;
+  const qty = pos && pos.shares ? pos.shares : 1;
+  // In "My profit" view each point becomes your profit in € at that moment.
+  const shown = profit ? pts.map(([t, v]) => [t, (v - pos.buy) * qty]) : pts;
+  const vals = shown.map((p) => p[1]);
+
+  // Reference line: 0 € in profit view; otherwise yesterday's close (1D) or the first point in range.
+  const base = profit ? 0 : range === "1D" ? data.prev_close : vals[0];
+  // Your buy price as a second reference line in price view (always visible on 1M+; on 1D only if close).
+  let buyLine = !profit && pos ? pos.buy : null;
   let lo = Math.min(...vals, base), hi = Math.max(...vals, base);
+  if (buyLine != null) {
+    if (range !== "1D") { lo = Math.min(lo, buyLine); hi = Math.max(hi, buyLine); }
+    else if (buyLine < lo || buyLine > hi) buyLine = null;
+  }
   if (hi - lo < 0.01) { hi += 1; lo -= 1; }
-  const x = (i) => (i / (pts.length - 1)) * W;
+  const x = (i) => (i / (shown.length - 1)) * W;
   const y = (v) => padY + (1 - (v - lo) / (hi - lo)) * (H - padY * 2);
 
   const up = vals[vals.length - 1] >= base;
   const color = up ? "var(--up)" : "var(--down)";
-  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  const line = shown.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  const label = (yy, text, fill) =>
+    `<text x="${W - 8}" y="${Math.max(12, yy - 6)}" text-anchor="end" font-size="11" font-weight="600" fill="${fill}">${text}</text>`;
 
   svg.innerHTML = `
     <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
@@ -184,12 +221,15 @@ function drawChart() {
       <stop offset="1" stop-color="${up ? "#2fd47c" : "#ff5c5c"}" stop-opacity="0"/>
     </linearGradient></defs>
     <line x1="0" x2="${W}" y1="${y(base)}" y2="${y(base)}" stroke="#3a444e" stroke-dasharray="3 5" vector-effect="non-scaling-stroke"/>
+    ${profit ? label(y(0), "0 € (break-even)", "#8a96a3") : ""}
+    ${buyLine != null ? `<line x1="0" x2="${W}" y1="${y(buyLine)}" y2="${y(buyLine)}" stroke="#f5b942" stroke-opacity=".7" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>
+      ${label(y(buyLine), "Bought " + fmtMoney(buyLine, data.currency), "#f5b942")}` : ""}
     <path d="${line}L${W},${H}L0,${H}Z" fill="url(#g)"/>
     <path d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
     <line id="cursor" y1="0" y2="${H}" stroke="#56616c" stroke-width="1" visibility="hidden"/>
     <circle id="dot" r="4.5" fill="${color}" stroke="var(--bg)" stroke-width="2" visibility="hidden"/>`;
 
-  svg._scale = { pts, x, y, W };
+  svg._scale = { pts: shown, x, y, W, profit };
 }
 
 function scrub(clientX) {
@@ -204,10 +244,11 @@ function scrub(clientX) {
   const when = range === "1D"
     ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : d.toLocaleDateString([], { day: "numeric", month: "short", year: range === "6M" ? "2-digit" : undefined });
-  tip.innerHTML = `<b>${fmtMoney(v, data.currency)}</b>${when}`;
+  const shownValue = s.profit ? (v >= 0 ? "+" : "−") + fmtMoney(Math.abs(v), data.currency) : fmtMoney(v, data.currency);
+  tip.innerHTML = `<b>${shownValue}</b>${when}`;
   tip.style.left = Math.max(50, Math.min(rect.width - 50, (cx / s.W) * rect.width)) + "px";
   tip.style.display = "block";
-  $("price").textContent = fmtMoney(v, data.currency);
+  if (!s.profit) $("price").textContent = fmtMoney(v, data.currency);
 }
 
 function endScrub() {
@@ -308,6 +349,19 @@ function render() {
     `<div class="row dist">No alerts set</div>`;
 
   renderPos();
+  $("views").hidden = !getPos();
+  if (!getPos()) {
+    view = "price";
+    document.querySelectorAll(".views button").forEach((x) => x.classList.toggle("on", x.dataset.v === "price"));
+  }
+
+  const news = d.news || [];
+  $("news").innerHTML = news.length
+    ? news.map((n) => `<a href="${esc(n.link)}" target="_blank" rel="noopener">
+        <div class="t">${esc(n.title)}</div>
+        <div class="m">${esc(n.source)}${n.time ? " · " + ago(n.time) : ""}</div></a>`).join("")
+    : `<div class="dist">No recent news</div>`;
+
   $("footer").innerHTML = `Price from ${ago(d.market_time)} · updated ${ago(d.updated)}<br>Delayed data from Yahoo Finance · not financial advice`;
   drawChart();
 }
@@ -322,6 +376,13 @@ async function load() {
     if (!data) $("footer").innerHTML = `<span class="error">Couldn't load prices. Check your connection.</span>`;
   }
 }
+
+$("views").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  view = b.dataset.v;
+  document.querySelectorAll(".views button").forEach((x) => x.classList.toggle("on", x === b));
+  drawChart();
+});
 
 $("ranges").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;

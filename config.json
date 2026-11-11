@@ -6,5 +6,14 @@
   "alert_above": 225.0,
   "alert_below": 190.0,
   "alert_daily_move_percent": 4.0,
-  "daily_summary": true
+  "daily_summary": true,
+  "profit_alert_levels": [-20, -10, 0, 10, 20, 30, 50, 75, 100],
+  "news_query": "\"GTA 6\" OR \"GTA VI\" OR \"Rockstar Games\" OR \"Take-Two Interactive\"",
+  "news_alert_keywords": [
+    "release date", "delay", "delayed", "postpone", "trailer", "launch", "earnings", "results",
+    "guidance", "layoff", "acquisition", "acquire", "pre-order", "preorder", "price", "leak",
+    "lawsuit", "sales", "record", "downgrade", "upgrade", "gameplay", "announce"
+  ],
+  "news_max_alerts_per_run": 3,
+  "news_max_alerts_per_day": 6
 }
