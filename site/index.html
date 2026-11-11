@@ -225,12 +225,13 @@ let editingPos = false;
 function renderPos() {
   const el = $("pos"), pos = getPos(), cur = data ? data.currency : "EUR";
   if (editingPos || !pos) {
-    const buy = pos ? String(pos.buy).replace(".", ",") : "", shares = pos && pos.shares ? String(pos.shares).replace(".", ",") : "";
+    const buy = pos ? String(pos.buy).replace(".", ",") : "";
+    const invested = pos && pos.shares ? String(+(pos.shares * pos.buy).toFixed(2)).replace(".", ",") : "";
     el.innerHTML = `
       <form id="posForm">
         <div class="two">
           <div><label for="buy">Buy price per share (€)</label><input id="buy" inputmode="decimal" placeholder="e.g. 192,80" value="${buy}" required></div>
-          <div><label for="shares">Shares (optional)</label><input id="shares" inputmode="decimal" placeholder="e.g. 5" value="${shares}"></div>
+          <div><label for="invested">Amount invested (€)</label><input id="invested" inputmode="decimal" placeholder="e.g. 500" value="${invested}"></div>
         </div>
         <button class="btn" type="submit">Save</button>
         ${pos ? `<button class="link" type="button" id="posClear">Remove my position</button>` : ""}
@@ -240,7 +241,8 @@ function renderPos() {
       e.preventDefault();
       const b = parseNum($("buy").value);
       if (!b) { $("buy").focus(); return; }
-      localStorage.setItem(POS_KEY, JSON.stringify({ buy: b, shares: parseNum($("shares").value) }));
+      const inv = parseNum($("invested").value);
+      localStorage.setItem(POS_KEY, JSON.stringify({ buy: b, shares: inv ? inv / b : null }));
       editingPos = false; render();
     });
     const clear = $("posClear");
@@ -253,7 +255,7 @@ function renderPos() {
   const sign = (v) => (v >= 0 ? "+" : "−") + fmtMoney(Math.abs(v), cur);
   const total = pos.shares ? per * pos.shares : null;
   el.innerHTML = `
-    <small style="color:var(--muted);font-size:12px">${per >= 0 ? "Profit" : "Loss"}${pos.shares ? "" : " per share"}</small>
+    <small style="color:var(--muted);font-size:12px">${pos.shares ? "Total " + (per >= 0 ? "profit" : "loss") : (per >= 0 ? "Profit" : "Loss") + " per share"}</small>
     <div class="big ${cls}">${sign(total ?? per)} <span style="font-size:17px">(${fmtPct(pct)})</span></div>
     <div class="rows">
       <div><small>Bought at</small><span>${fmtMoney(pos.buy, cur)}</span></div>
@@ -261,7 +263,7 @@ function renderPos() {
       ${pos.shares ? `
       <div><small>Invested</small><span>${fmtMoney(pos.buy * pos.shares, cur)}</span></div>
       <div><small>Worth now</small><span>${fmtMoney(price * pos.shares, cur)}</span></div>
-      <div><small>Shares</small><span>${String(pos.shares).replace(".", ",")}</span></div>
+      <div><small>Shares</small><span>${pos.shares.toLocaleString("de-DE", { maximumFractionDigits: 4 })}</span></div>
       <div><small>Per share</small><span class="${cls}">${sign(per)}</span></div>` : ""}
     </div>
     <button class="link" id="posEdit">Edit</button>`;

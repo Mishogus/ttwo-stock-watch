@@ -148,16 +148,22 @@ def env_num(name):
 
 
 def position_line(q):
-    """'You: +€15.77 (+8.18%)' if BUY_PRICE is set; total instead of per-share if SHARES is set too."""
+    """Your profit/loss line, if BUY_PRICE is set.
+    With INVESTED (money put in) or SHARES it shows the total and what it's worth now; otherwise per share."""
     buy = env_num("BUY_PRICE")
     if not buy:
         return ""
-    shares = env_num("SHARES")
+    invested = env_num("INVESTED")
+    shares = env_num("SHARES") or (invested / buy if invested else None)
     per = q["price"] - buy
-    amount = per * shares if shares else per
-    sign = "+" if amount >= 0 else "-"
-    label = "" if shares else " per share"
-    return f"\nYou: {sign}{money(q, abs(amount))}{label} ({per / buy * 100:+.2f}%)"
+    pct = per / buy * 100
+    if shares:
+        total = per * shares
+        sign = "+" if total >= 0 else "-"
+        return (f"\nYou: {sign}{money(q, abs(total))} ({pct:+.2f}%)"
+                f" · worth {money(q, q['price'] * shares)}")
+    sign = "+" if per >= 0 else "-"
+    return f"\nYou: {sign}{money(q, abs(per))} per share ({pct:+.2f}%)"
 
 
 def fmt(q):

@@ -47,6 +47,7 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           BUY_PRICE: ${{ secrets.BUY_PRICE }}
           SHARES: ${{ secrets.SHARES }}
+          INVESTED: ${{ secrets.INVESTED }}
         run: python stock_watch.py --test
 
       - name: Check price and send alerts
@@ -55,6 +56,7 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           BUY_PRICE: ${{ secrets.BUY_PRICE }}
           SHARES: ${{ secrets.SHARES }}
+          INVESTED: ${{ secrets.INVESTED }}
         run: python stock_watch.py --once
 
       - name: Build app data
