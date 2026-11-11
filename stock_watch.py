@@ -62,9 +62,10 @@ def load_config():
         save_json(CONFIG_PATH, DEFAULT_CONFIG)
     cfg = {**DEFAULT_CONFIG, **load_json(CONFIG_PATH, {})}
 
-    topic = os.environ.get("NTFY_TOPIC", "").strip()
+    # strip("﻿") drops an invisible byte-order mark that Windows tools sometimes add.
+    topic = os.environ.get("NTFY_TOPIC", "").strip().strip("﻿").strip()
     if not topic and TOPIC_PATH.exists():
-        topic = TOPIC_PATH.read_text(encoding="utf-8").strip()
+        topic = TOPIC_PATH.read_text(encoding="utf-8-sig").strip()
     cfg["ntfy_topic"] = topic or None
     return cfg
 
