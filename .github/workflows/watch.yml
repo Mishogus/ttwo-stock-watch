@@ -45,12 +45,16 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'test'
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          BUY_PRICE: ${{ secrets.BUY_PRICE }}
+          SHARES: ${{ secrets.SHARES }}
         run: python stock_watch.py --test
 
       - name: Check price and send alerts
         if: github.event_name == 'schedule' || inputs.mode == 'check'
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          BUY_PRICE: ${{ secrets.BUY_PRICE }}
+          SHARES: ${{ secrets.SHARES }}
         run: python stock_watch.py --once
 
       - name: Build app data

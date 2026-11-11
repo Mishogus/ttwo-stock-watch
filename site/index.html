@@ -74,6 +74,23 @@
   .alerts .row + .row { border-top: 1px solid var(--line); }
   .alerts .dist { color: var(--muted); font-size: 13px; }
 
+  .pos { padding: 14px; }
+  .pos .big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pos .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .pos .rows { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .pos .rows small { display: block; color: var(--muted); font-size: 12px; }
+  .pos .rows span { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .gain { color: var(--up); } .loss { color: var(--down); }
+  .link { background: none; border: 0; color: var(--muted); font: inherit; font-size: 13px; padding: 10px 0 0; cursor: pointer; text-decoration: underline; }
+  .btn { width: 100%; padding: 13px; border-radius: 12px; border: 0; font: inherit; font-weight: 600; cursor: pointer; background: var(--up); color: #062413; }
+  form label { display: block; color: var(--muted); font-size: 12px; margin: 0 0 4px; }
+  form input {
+    width: 100%; padding: 12px; margin-bottom: 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit; font-size: 16px; user-select: text;
+  }
+  form .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .yourline { margin-top: 6px; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
   footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 24px; line-height: 1.6; }
   .error { color: var(--down); }
   .skeleton { opacity: .35; }
@@ -90,6 +107,7 @@
 
   <div class="price" id="price">–</div>
   <div class="change" id="change">&nbsp;</div>
+  <div class="yourline" id="yourLine"></div>
 
   <div class="chart-wrap" id="chartWrap">
     <svg id="chart" preserveAspectRatio="none"></svg>
@@ -109,6 +127,9 @@
     <div class="card"><small>Previous close</small><div id="prev">–</div></div>
     <div class="card"><small>USD → EUR</small><div id="fx">–</div></div>
   </div>
+
+  <h2>Your position</h2>
+  <div class="card pos" id="pos"></div>
 
   <h2>Your alerts</h2>
   <div class="card alerts" id="alerts"></div>
@@ -195,6 +216,59 @@ function endScrub() {
   if (data) $("price").textContent = fmtMoney(data.price, data.currency);
 }
 
+// ---- Your position: stored only on this phone (localStorage), never uploaded. ----
+const POS_KEY = "ttwo-position";
+const getPos = () => { try { return JSON.parse(localStorage.getItem(POS_KEY)) || null; } catch { return null; } };
+const parseNum = (s) => { const n = parseFloat(String(s).trim().replace(/\s/g, "").replace(",", ".")); return isFinite(n) && n > 0 ? n : null; };
+let editingPos = false;
+
+function renderPos() {
+  const el = $("pos"), pos = getPos(), cur = data ? data.currency : "EUR";
+  if (editingPos || !pos) {
+    const buy = pos ? String(pos.buy).replace(".", ",") : "", shares = pos && pos.shares ? String(pos.shares).replace(".", ",") : "";
+    el.innerHTML = `
+      <form id="posForm">
+        <div class="two">
+          <div><label for="buy">Buy price per share (€)</label><input id="buy" inputmode="decimal" placeholder="e.g. 192,80" value="${buy}" required></div>
+          <div><label for="shares">Shares (optional)</label><input id="shares" inputmode="decimal" placeholder="e.g. 5" value="${shares}"></div>
+        </div>
+        <button class="btn" type="submit">Save</button>
+        ${pos ? `<button class="link" type="button" id="posClear">Remove my position</button>` : ""}
+        <div class="sub" style="margin-top:8px">Saved only on this phone.</div>
+      </form>`;
+    $("posForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const b = parseNum($("buy").value);
+      if (!b) { $("buy").focus(); return; }
+      localStorage.setItem(POS_KEY, JSON.stringify({ buy: b, shares: parseNum($("shares").value) }));
+      editingPos = false; render();
+    });
+    const clear = $("posClear");
+    if (clear) clear.addEventListener("click", () => { localStorage.removeItem(POS_KEY); editingPos = true; render(); });
+    $("yourLine").textContent = "";
+    return;
+  }
+
+  const price = data.price, per = price - pos.buy, pct = (per / pos.buy) * 100, cls = per >= 0 ? "gain" : "loss";
+  const sign = (v) => (v >= 0 ? "+" : "−") + fmtMoney(Math.abs(v), cur);
+  const total = pos.shares ? per * pos.shares : null;
+  el.innerHTML = `
+    <small style="color:var(--muted);font-size:12px">${per >= 0 ? "Profit" : "Loss"}${pos.shares ? "" : " per share"}</small>
+    <div class="big ${cls}">${sign(total ?? per)} <span style="font-size:17px">(${fmtPct(pct)})</span></div>
+    <div class="rows">
+      <div><small>Bought at</small><span>${fmtMoney(pos.buy, cur)}</span></div>
+      <div><small>Now</small><span>${fmtMoney(price, cur)}</span></div>
+      ${pos.shares ? `
+      <div><small>Invested</small><span>${fmtMoney(pos.buy * pos.shares, cur)}</span></div>
+      <div><small>Worth now</small><span>${fmtMoney(price * pos.shares, cur)}</span></div>
+      <div><small>Shares</small><span>${String(pos.shares).replace(".", ",")}</span></div>
+      <div><small>Per share</small><span class="${cls}">${sign(per)}</span></div>` : ""}
+    </div>
+    <button class="link" id="posEdit">Edit</button>`;
+  $("posEdit").addEventListener("click", () => { editingPos = true; renderPos(); });
+  $("yourLine").innerHTML = `You: <span class="${cls}">${sign(total ?? per)} (${fmtPct(pct)})</span>`;
+}
+
 function setBar(dot, lo, hi, v) {
   const p = hi > lo ? ((v - lo) / (hi - lo)) * 100 : 50;
   $(dot).style.left = Math.max(0, Math.min(100, p)) + "%";
@@ -231,6 +305,7 @@ function render() {
     `<div class="row"><span>${k} <b>${v}</b></span><span class="dist">${s}</span></div>`).join("") ||
     `<div class="row dist">No alerts set</div>`;
 
+  renderPos();
   $("footer").innerHTML = `Price from ${ago(d.market_time)} · updated ${ago(d.updated)}<br>Delayed data from Yahoo Finance · not financial advice`;
   drawChart();
 }

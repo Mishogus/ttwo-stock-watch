@@ -138,9 +138,31 @@ def money(cfg_or_q, value):
     return f"{sym}{value:.2f}" if sym else f"{value:.2f} {cur}"
 
 
+def env_num(name):
+    """Private numbers (your buy price / shares) come from GitHub secrets, never from the public repo."""
+    raw = os.environ.get(name, "").strip().strip("﻿").replace(",", ".")
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def position_line(q):
+    """'You: +€15.77 (+8.18%)' if BUY_PRICE is set; total instead of per-share if SHARES is set too."""
+    buy = env_num("BUY_PRICE")
+    if not buy:
+        return ""
+    shares = env_num("SHARES")
+    per = q["price"] - buy
+    amount = per * shares if shares else per
+    sign = "+" if amount >= 0 else "-"
+    label = "" if shares else " per share"
+    return f"\nYou: {sign}{money(q, abs(amount))}{label} ({per / buy * 100:+.2f}%)"
+
+
 def fmt(q):
     arrow = "▲" if q["change_pct"] >= 0 else "▼"
-    return f"{money(q, q['price'])} {arrow} {q['change_pct']:+.2f}% today"
+    return f"{money(q, q['price'])} {arrow} {q['change_pct']:+.2f}% today{position_line(q)}"
 
 
 def notify(cfg, title, message, priority="default", tags=""):
@@ -164,7 +186,7 @@ def check(cfg):
     now = time.time()
     day = datetime.fromtimestamp(q["session_start"], timezone.utc).strftime("%Y-%m-%d")
     sym = q["symbol"]
-    print(f"[{datetime.now():%H:%M}] {sym} {fmt(q)}")
+    print(f"[{datetime.now():%H:%M}] {sym} {money(q, q['price'])} {q['change_pct']:+.2f}% today")
 
     # A new trading day resets the "already alerted" flags for daily moves.
     if state.get("day") != day:

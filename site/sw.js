@@ -1,5 +1,5 @@
 // Lets the app open instantly and work offline with the last prices it saw.
-const CACHE = "ttwo-v1";
+const CACHE = "ttwo-v2";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
