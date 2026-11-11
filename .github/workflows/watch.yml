@@ -1,0 +1,58 @@
+name: Stock watch
+
+on:
+  schedule:
+    # Every 5 minutes, Mon-Fri, 13:00-21:55 UTC.
+    # Covers US market hours in both summer (13:30-20:00 UTC) and winter (14:30-21:00 UTC),
+    # plus time after the close for the daily summary. GitHub may run these a few minutes late.
+    - cron: "*/5 13-21 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "What to run"
+        type: choice
+        options: [check, test]
+        default: test
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stock-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Send test notification
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'test'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python stock_watch.py --test
+
+      - name: Check price and send alerts
+        if: github.event_name == 'schedule' || inputs.mode == 'check'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python stock_watch.py --once
+
+      # Remember which alerts were already sent, so you don't get duplicates.
+      - name: Save state
+        if: github.event_name == 'schedule' || inputs.mode == 'check'
+        run: |
+          if [ -n "$(git status --porcelain state.json)" ]; then
+            git config user.name "stock-watch-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add state.json
+            git commit -m "Update alert state"
+            git pull --rebase
+            git push
+          fi

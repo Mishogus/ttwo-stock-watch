@@ -1,0 +1,9 @@
+{
+  "symbol": "TTWO",
+  "ntfy_server": "https://ntfy.sh",
+  "check_every_minutes": 5,
+  "alert_above": 250.0,
+  "alert_below": 210.0,
+  "alert_daily_move_percent": 4.0,
+  "daily_summary": true
+}
